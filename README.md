@@ -1,61 +1,134 @@
-# Kiln
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/kiln-logo-dark.svg">
+    <img src="docs/assets/kiln-logo-light.svg" alt="Kiln" width="320">
+  </picture>
+</p>
 
-Prototype of a Fabric-like platform whose game logic runs on **Paper**: players install the client runtime
-(a Fabric mod) once. Everything client-side a server needs (textures, custom widgets, HUD overlays, keybinds,
-channels) comes from the server as a **Lua extension package** and runs in a sandbox inside the runtime. There are no
-client extensions in Kotlin/Java and no fallbacks: players without the runtime, with a different protocol version,
-who decline the extensions or whose extensions fail to load are disconnected with a reason.
+<p align="center">
+  <b>Server-driven client content for Paper.</b><br>
+  Real GUIs, keybinds and sandboxed Lua extensions, shipped by the server and rendered natively on the client.
+</p>
 
-Specification: [`docs/design.md`](docs/design.md) (GUIs, keybinds, protocol) and
-[`docs/lua-extensions.md`](docs/lua-extensions.md) (extension packages, delivery, sandbox, Lua API v1).
+<p align="center">
+  <a href="https://github.com/SLNE-Development/kiln/actions/workflows/build.yml"><img src="https://github.com/SLNE-Development/kiln/actions/workflows/build.yml/badge.svg?branch=main" alt="Build"></a>
+  <img src="https://img.shields.io/badge/Minecraft-26.3-3C8527" alt="Minecraft 26.3">
+  <img src="https://img.shields.io/badge/Paper-26.3-F7CF0D" alt="Paper 26.3">
+  <img src="https://img.shields.io/badge/Fabric-0.20.1-DBD0B4" alt="Fabric Loader 0.20.1">
+  <img src="https://img.shields.io/badge/Java-25-E76F00" alt="Java 25">
+</p>
 
-Targets: Minecraft 26.3, Paper `26.3.build.256-stable`, Fabric Loader 0.20.1, Fabric API `0.164.0+26.3`,
-Java 25, Kotlin 2.4.21, LuaJ 3.0.1 (Lua 5.2).
+---
+
+> **Status: prototype.** APIs, protocol and package format still change between versions.
+
+## What is Kiln?
+
+Vanilla Minecraft offers servers no real way to show custom user interfaces: chest menus, books and dialogs can be
+bent into shape, but always with hacks such as core shaders or font tricks. Kiln takes a different route, similar to
+FiveM or Garry's Mod:
+
+- Players install the **Kiln runtime** once, a small Fabric mod.
+- Everything client-side a server needs comes **from the server**: GUI trees, keybinds, textures and Lua scripts.
+- Game logic, money, items and validation stay on the **Paper server**. The client only renders and reports input.
+- Server scripts run in a **sandbox** (LuaJ without `io`, `os`, `debug`, `load` or Java access, with instruction,
+  memory and rate budgets). Players see which permissions an extension wants and agree **before** anything is
+  downloaded.
+- There are no fallbacks: players without the runtime, with another protocol version, who decline or whose
+  extensions fail to load are disconnected with a clear reason.
+
+```mermaid
+flowchart LR
+    subgraph Server["Paper server"]
+        P[Your plugin] --> K[Kiln plugin]
+        E[(Extension packages<br/>Lua · PNG · JSON)] --> K
+    end
+    subgraph Client["Player (Fabric)"]
+        R[Kiln runtime] --> S[Native screens · HUD · keybinds]
+        R --> L[Lua sandbox]
+    end
+    K -- "manifest → consent → download<br/>(configuration phase)" --> R
+    K <-- "GUI trees, updates, typed channels" --> R
+```
+
+## Two ways to build UIs
+
+**1. Server-defined screens** with the Kotlin DSL. The server sends a tree of elements and live updates; the
+client keeps focus, scroll position and text input across updates.
+
+```kotlin
+player.openScreen(220, 120) {
+    panel(width = 220, height = 120) {
+        layout = Layout.Column(gap = 6, padding = 10)
+        text("Energie: ${machine.energy} %")
+        progressBar(machine.energy / 100f, width = 200)
+        button("toggle", if (machine.running) "Ausschalten" else "Einschalten") {
+            onClick { machine.running = !machine.running; it.screen.refresh() }
+        }
+    }
+}
+```
+
+**2. Lua extensions** for anything that needs client-side logic: custom widgets, HUD overlays, keybinds, full
+screens. The API extension `ui_kit` provides buttons, tabs, dropdowns, sliders, tables, scroll panels, modals and
+item slots.
+
+```lua
+local ui, keys, net = kiln.ui, kiln.keys, kiln.net
+local hello = net.channel("hello")
+
+keys.bind("hello", { name = "Hallo an Server", default = "J", press = function()
+  hello:send({ text = "Hallo vom Client!" })
+end })
+
+hello:on(function(msg) ui.toast("Server", msg.text) end)
+```
+
+```kotlin
+val ext = registerExtension("kiln_example")              // from the plugin's resources
+ext.channel<HelloMessage>("hello") { player, msg -> send(player, HelloMessage("Hallo zurück, ${player.name}!")) }
+```
 
 ## Modules
 
-| Module | Kind | Depends on | Artifact |
-|---|---|---|---|
-| `protocol` | plain Kotlin/JVM, no Minecraft | – | messages, GUI tree, binary codec, limits |
-| `server-api` | Kotlin, `compileOnly` paper-api | – | API for Paper plugins (`Kiln`, screen DSL, keybinds, extensions) |
-| `server` | Paper plugin `Kiln` | `protocol`, `server-api` (shaded, + Kotlin stdlib) | `kiln-server-<v>.jar` |
-| `client` | Fabric mod `kiln` | `protocol` + LuaJ (both `include`d) | `kiln-client-<v>.jar` |
-| `example-server` | Paper plugin `KilnExample` | `server-api` (compileOnly), `depend: [Kiln]` | demo plugin + Lua extensions `kiln_example`, `ui_kit`, `shop` |
+| Module | Kind | Artifact |
+|---|---|---|
+| `protocol` | plain Kotlin/JVM, no Minecraft | messages, GUI tree, binary codec, limits |
+| `server-api` | Kotlin, `compileOnly` paper-api | API for Paper plugins: screen DSL, keybinds, extensions, typed channels |
+| `server` | Paper plugin `Kiln` | `kiln-server-<v>.jar` (shades `protocol`, `server-api`, Kotlin stdlib) |
+| `client` | Fabric mod `kiln` | `kiln-client-<v>.jar` (`protocol` and LuaJ as nested jars) |
+| `example-server` | Paper plugin `KilnExample` | demos and Lua extensions, see below |
 
-## Build
+## Getting started
 
-```sh
-./gradlew build                     # everything, including tests
-./gradlew :client:test              # sandbox, Lua API, JSON, package/zip, trust tests
-```
-
-Outputs:
-- `server/build/libs/kiln-server-<v>.jar` (shadow jar; install on Paper)
-- `example-server/build/libs/kiln-example-server-<v>.jar`
-- `client/build/libs/kiln-client-<v>.jar` (protocol and LuaJ as nested jars)
-
-Players need the client jar plus Fabric API and Fabric Language Kotlin.
-
-## Testing locally
+Requirements: Java 25. Gradle downloads everything else.
 
 ```sh
-./gradlew :example-server:runServer    # Paper 26.3 with Kiln + example plugin, run dir: run/server
-                                       # (-PserverPort=25566 if 25565 is taken)
-./gradlew :client:runClient            # Minecraft 26.3 with the kiln runtime, run dir: client/run
+./gradlew build                     # all modules, including tests
+./gradlew :example-server:runServer # Paper 26.3 with Kiln and the demos (run/server)
+./gradlew :client:runClient         # Minecraft 26.3 with the Kiln runtime (client/run), offline user "Ammo"
 ```
 
-Connect the dev client to `localhost`. On the first join the client downloads the example extension, asks for
-consent (stored in `client/run/config/kiln-trust.json`) and caches the package in
-`client/run/kiln/cache/<sha256>.zip`.
+Connect the dev client to the server. On the first join you see the consent screen, then the loading screen, then
+the world. Players need `kiln-client-<v>.jar`, Fabric API and Fabric Language Kotlin.
 
-## Writing extensions
+### Demos
 
-- **Server plugins**: `compileOnly` the `server-api` artifact (and the Kotlin stdlib), `depend: [Kiln]` in
-  `plugin.yml`, then `Kiln.get()` / `player.openScreen(screen(w, h) { ... })`.
-- **Client-side behaviour**: an extension package (`extension.json`, `*.lua`, `textures/**.png`, optional
-  `lang/<locale>.json`) registered by the plugin; see `docs/lua-extensions.md` and the example in
-  `example-server/src/main/resources/extensions/kiln_example/`.
-- **Lua screens**: the API extension `ui_kit` (buttons, dropdowns, sliders, scroll panels, modals, item slots, …;
-  `docs/ui_kit.md`) and the market `shop` built on it (`/shop`, key K; the same market rendered by the server:
-  `/shopdsl`). Five more ui_kit demos, each its own extension with its own key: `fabrik` (B, `/fabrik`),
-  `questlog` (U, `/quests`), `warps` (V, `/warps`), `bestenliste` (N, `/bestenliste`), `profil` (M, `/profil`).
+| Command | Key | What it shows |
+|---|---|---|
+| `/pbdemo` | G | server-defined factory screen with live updates, gauge widget from Lua |
+| `/shop` | K | full-screen market as a Lua screen on `ui_kit` (server-rendered twin: `/shopdsl`) |
+| `/fabrik` | B | machine control: list, details, toggles, slider, dropdown |
+| `/quests` | U | quest log with tabs, progress and reward items |
+| `/warps` | V | warp tiles, search, favourites, teleport with cooldown |
+| `/bestenliste` | N | sortable leaderboard table and bar chart |
+| `/profil` | M | settings form with live preview and unsaved-changes dialog |
+
+## Documentation
+
+- [`docs/design.md`](docs/design.md): architecture, protocol, GUI elements, keybinds
+- [`docs/lua-extensions.md`](docs/lua-extensions.md): extension packages, delivery, consent, sandbox, Lua API
+- [`docs/ui_kit.md`](docs/ui_kit.md): the `ui_kit` component library
+
+Targets: Minecraft 26.3, Paper `26.3.build.256-stable`, Fabric Loader 0.20.1, Fabric API `0.164.0+26.3`,
+Kotlin 2.4.21, LuaJ 3.0.1 (Lua 5.2).

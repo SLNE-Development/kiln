@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="320" height="100" viewBox="0 0 320 100" role="img" aria-label="Kiln">
+  <!-- for light backgrounds -->
+  <path d="M50 8 L86 29 L86 71 L50 92 L14 71 L14 29 Z" fill="none" stroke="#1A1D21" stroke-width="7" stroke-linejoin="round"/>
+  <path d="M50 34 L64 42 L64 58 L50 66 L36 58 L36 42 Z" fill="#E8620C"/>
+  <path d="M50 42 L57 46 L57 54 L50 58 L43 54 L43 46 Z" fill="#FFB020"/>
+  <g fill="none" stroke="#1A1D21" stroke-width="9" stroke-linecap="square" stroke-linejoin="miter">
+    <path d="M124.5 26 V74 M156 26 L131 52 M142 44 L160 74"/>
+    <path d="M181.5 26 V74"/>
+    <path d="M204.5 26 V69.5 H232"/>
+    <path d="M253.5 74 V26 L284.5 74 V26"/>
+  </g>
+</svg>

@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 100 100" role="img" aria-label="Kiln">
+  <path d="M50 8 L86 29 L86 71 L50 92 L14 71 L14 29 Z" fill="#101214" stroke="#E8EAEC" stroke-width="7" stroke-linejoin="round"/>
+  <path d="M50 34 L64 42 L64 58 L50 66 L36 58 L36 42 Z" fill="#FF7A1A"/>
+  <path d="M50 42 L57 46 L57 54 L50 58 L43 54 L43 46 Z" fill="#FFC24A"/>
+</svg>
