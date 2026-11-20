@@ -3,10 +3,15 @@
   <path d="M50 8 L86 29 L86 71 L50 92 L14 71 L14 29 Z" fill="none" stroke="#1A1D21" stroke-width="7" stroke-linejoin="round"/>
   <path d="M50 34 L64 42 L64 58 L50 66 L36 58 L36 42 Z" fill="#E8620C"/>
   <path d="M50 42 L57 46 L57 54 L50 58 L43 54 L43 46 Z" fill="#FFB020"/>
-  <g fill="none" stroke="#1A1D21" stroke-width="9" stroke-linecap="square" stroke-linejoin="miter">
-    <path d="M124.5 26 V74 M156 26 L131 52 M142 44 L160 74"/>
-    <path d="M181.5 26 V74"/>
-    <path d="M204.5 26 V69.5 H232"/>
-    <path d="M253.5 74 V26 L284.5 74 V26"/>
+  <g fill="#1A1D21">
+    <rect x="120" y="26" width="9" height="48"/>
+    <polygon points="129,46 151,26 164,26 129,58"/>
+    <polygon points="137,49 164,74 151,74 130,56"/>
+    <rect x="177" y="26" width="9" height="48"/>
+    <rect x="200" y="26" width="9" height="48"/>
+    <rect x="200" y="65" width="32" height="9"/>
+    <rect x="249" y="26" width="9" height="48"/>
+    <rect x="280" y="26" width="9" height="48"/>
+    <polygon points="249,26 259,26 289,74 279,74"/>
   </g>
 </svg>
