@@ -354,4 +354,71 @@ class LuaScreenTest {
         assertTrue(millis < 4.0, "$millis ms per frame")
         assertTrue(target.items >= 50 * 1000)
     }
+
+    /** A screen that swallows every key (an attempt to keep the player inside) and reopens whenever it can. */
+    private val trapScreen = """
+        log = {}
+        kiln.ui.screen("trap", {
+          key = function(self, s, key) log[#log + 1] = "key " .. key return true end,
+          close = function(self, s, reason) log[#log + 1] = "close " .. reason end,
+        })
+        kiln.net.channel("open"):on(function() log[#log + 1] = "open " .. tostring(kiln.ui.open("trap")) end)
+    """.trimIndent()
+
+    @Test
+    fun `Shift+Escape always closes, Lua is not asked`() {
+        val host = V2Host()
+        val ext = host.load(pkg("trap", setOf("screens", "channels"), files = *arrayOf("main.lua" to trapScreen)))
+        ext.onChannelMessage("open", "{}")
+        assertEquals(KeyResult.HANDLED, host.escape())
+        assertEquals(KeyResult.CLOSE, host.escape(shift = true))
+        assertNull(host.shown)
+        assertNull(ext.screenSession)
+        assertEquals(listOf("open true", "key escape", "close escape"), log(ext))
+        assertTrue(ext.alive, host.failures.toString())
+    }
+
+    @Test
+    fun `the third Escape within 1,5 s closes even if Lua swallows it`() {
+        val host = V2Host()
+        val ext = host.load(pkg("trap", setOf("screens", "channels"), files = *arrayOf("main.lua" to trapScreen)))
+        ext.onChannelMessage("open", "{}")
+        // slow presses: Lua keeps handling Escape (e.g. closing one modal after another)
+        repeat(4) {
+            assertEquals(KeyResult.HANDLED, host.escape())
+            host.clockSeconds += 0.8
+        }
+        assertSame(ext.screenSession, host.shown)
+        host.clockSeconds += 1.0
+        // three quick presses (the oldest 1.4 s before the last) force the way out
+        assertEquals(KeyResult.HANDLED, host.escape())
+        host.clockSeconds += 0.7
+        assertEquals(KeyResult.HANDLED, host.escape())
+        host.clockSeconds += 0.7
+        assertEquals(KeyResult.CLOSE, host.escape())
+        assertNull(host.shown)
+        assertEquals(listOf("open true") + List(6) { "key escape" } + "close escape", log(ext))
+    }
+
+    @Test
+    fun `after a forced close the extension cannot reopen its screen for a while`() {
+        val host = V2Host()
+        val ext = host.load(pkg("trap", setOf("screens", "channels"), files = *arrayOf("main.lua" to trapScreen)))
+        ext.onChannelMessage("open", "{}")
+        // a normal close (Lua does not swallow) does not block
+        ext.runtime.call(ext.runtime.globals.get("kiln").get("ui").get("close"))
+        ext.onChannelMessage("open", "{}")
+        assertTrue(host.shown != null)
+        assertEquals(KeyResult.CLOSE, host.escape(shift = true))
+        ext.onChannelMessage("open", "{}")
+        assertNull(host.shown, "reopening right after the forced close is refused")
+        host.clockSeconds += LuaExtension.FORCED_OUT_SECONDS - 0.1
+        ext.onChannelMessage("open", "{}")
+        assertNull(host.shown)
+        host.clockSeconds += 0.2
+        ext.onChannelMessage("open", "{}")
+        assertTrue(host.shown != null)
+        assertEquals(listOf("open true", "close closed", "open true", "close escape", "open false", "open false", "open true"), log(ext))
+        assertTrue(ext.alive, host.failures.toString())
+    }
 }

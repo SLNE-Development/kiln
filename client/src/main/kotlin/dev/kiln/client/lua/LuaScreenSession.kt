@@ -204,15 +204,35 @@ class LuaScreenSession internal constructor(
         closeReason = "escape"
     }
 
+    private val escapeTimes = ArrayDeque<Double>()
+
+    /** Records an Escape press; `true` if it must close the screen regardless of Lua (see [keyPressed]). */
+    private fun forcedEscape(mods: Mods): Boolean {
+        if (mods.shift) return true
+        val now = host.clock()
+        while (escapeTimes.isNotEmpty() && now - escapeTimes.first() > FORCED_ESCAPE_SECONDS) escapeTimes.removeFirst()
+        escapeTimes.addLast(now)
+        return escapeTimes.size >= FORCED_ESCAPE_PRESSES
+    }
+
     // ---- input --------------------------------------------------------------------------------------------
 
     /**
      * Key press not consumed by the focused text input. [key] is the short key name (`escape`, `enter`, `tab`,
      * `a`, `left.shift`, `keypad.enter`, ...).
+     *
+     * **Guaranteed way out** (the script cannot block it): Shift+Escape, or the [FORCED_ESCAPE_PRESSES]th Escape
+     * within [FORCED_ESCAPE_SECONDS], closes the screen without asking Lua's `key` (`close` still runs with reason
+     * `"escape"`). Otherwise an extension could keep the player in its screen by returning `true` for every Escape.
      */
     fun keyPressed(key: String, mods: Mods): KeyResult {
         if (state != State.OPEN) return KeyResult.PASS
         setMods(mods)
+        if (key == "escape" && forcedEscape(mods)) {
+            extension.forcedOut()
+            closingByEscape()
+            return KeyResult.CLOSE
+        }
         if (callBool("key", self, screen, LuaValue.valueOf(key), modsTable(mods))) return KeyResult.HANDLED
         if (state != State.OPEN) return KeyResult.HANDLED
         if (key == "tab") {
@@ -460,6 +480,10 @@ class LuaScreenSession internal constructor(
         const val MAX_INPUTS = 64
         const val DEFAULT_INPUT_HEIGHT = 20
         const val DEFAULT_MAX_LENGTH = 256
+
+        /** Escape presses within [FORCED_ESCAPE_SECONDS] that always close a Lua screen (Lua may swallow fewer). */
+        const val FORCED_ESCAPE_PRESSES = 3
+        const val FORCED_ESCAPE_SECONDS = 1.5
         val CALLBACKS = listOf("init", "render", "resize", "close", "key", "char", "click", "release", "drag", "scroll")
         val CURSORS = setOf("default", "hand", "text", "crosshair", "resize_ns", "resize_ew", "move", "not_allowed")
         private val INPUT_ID = Regex("[A-Za-z0-9_.:-]{1,64}")

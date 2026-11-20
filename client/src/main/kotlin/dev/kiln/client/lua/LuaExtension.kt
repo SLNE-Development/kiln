@@ -117,6 +117,9 @@ class LuaExtension(
         private set
 
     private var inCloseCallback = false
+
+    /** [ExtensionHost.clock] until which `ui.open` refuses (after the player forced a screen of this extension shut). */
+    private var openBlockedUntil = Double.NEGATIVE_INFINITY
     private val openTimes = ArrayDeque<Long>()
     private val soundTimes = ArrayDeque<Long>()
 
@@ -486,6 +489,7 @@ class LuaExtension(
         val def = screenDefs[name] ?: throw LuaError("unknown screen '$type' (define it with kiln.ui.screen)")
         if (loading) throw LuaError("screens cannot be opened while the extension loads")
         if (inCloseCallback) throw LuaError("screens cannot be opened from a close callback")
+        if (host.clock() < openBlockedUntil) return false
         val now = System.nanoTime()
         while (openTimes.isNotEmpty() && now - openTimes.first() >= 10_000_000_000L) openTimes.removeFirst()
         if (openTimes.size >= MAX_OPENS_PER_10S) throw LuaError("too many screens opened (limit $MAX_OPENS_PER_10S per 10 s)")
@@ -498,6 +502,15 @@ class LuaExtension(
             return false
         }
         return true
+    }
+
+    /**
+     * The player used the guaranteed way out of this extension's screen (Shift+Escape / repeated Escape): it may not
+     * open a screen again for [FORCED_OUT_SECONDS], so it cannot trap the player by reopening at once (HUD render,
+     * channel handler, ...).
+     */
+    internal fun forcedOut() {
+        openBlockedUntil = host.clock() + FORCED_OUT_SECONDS
     }
 
     /** The host removed [session] from the screen (Escape, close, replaced). */
@@ -650,6 +663,9 @@ class LuaExtension(
         const val API_VERSION = 2
         const val MAX_SCREENS = 32
         const val MAX_OPENS_PER_10S = 10
+
+        /** Seconds an extension cannot open screens after the player forced one of them shut. */
+        const val FORCED_OUT_SECONDS = 10.0
         const val MAX_SOUNDS_PER_SECOND = 10
 
         /** `kiln.ui.sound` / `s:sound` names (mapped to vanilla sound events by the runtime). */

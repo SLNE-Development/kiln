@@ -24,7 +24,7 @@ import net.minecraft.network.chat.Component
  * text inputs are drawn inside the Lua render call (so they are layered and clipped like Lua drawing).
  *
  * Keys: the focused text input first (editing keys), then Lua `key`; Tab cycles inputs, Escape closes unless Lua
- * handled it. The screen closes on disconnect (the runtime replaces it) without running Lua.
+ * handled it; Shift+Escape and a third Escape within 1.5 s always close (see [LuaScreenSession.keyPressed]). The screen closes on disconnect (the runtime replaces it) without running Lua.
  */
 class LuaScreen(val session: LuaScreenSession, private val textures: ExtensionTextures) : Screen(Component.empty()), ScreenView {
     /** Set when the screen goes away without Lua being told (disconnect, extension unloaded). */
@@ -61,9 +61,10 @@ class LuaScreen(val session: LuaScreenSession, private val textures: ExtensionTe
     private fun mods(event: MouseButtonEvent) = LuaScreenSession.Mods(event.hasShiftDown(), event.hasControlDown(), event.hasAltDown())
 
     override fun keyPressed(event: KeyEvent): Boolean {
-        val box = session.focused?.box as? EditBoxTextBox
-        if (box != null && box.edit.keyPressed(event)) return true
         val name = LuaScreenSession.shortKeyName(InputConstants.getKey(event).name)
+        // Escape never goes to a text field: the session decides (including the forced way out, Shift+Escape / 3x)
+        val box = session.focused?.box as? EditBoxTextBox
+        if (name != "escape" && box != null && box.edit.keyPressed(event)) return true
         return when (session.keyPressed(name, mods(event))) {
             LuaScreenSession.KeyResult.HANDLED -> true
             LuaScreenSession.KeyResult.CLOSE -> {

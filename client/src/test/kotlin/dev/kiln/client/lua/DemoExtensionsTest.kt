@@ -8,6 +8,7 @@ import dev.kiln.client.lua.V2Host.Companion.item
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotNull
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.luaj.vm2.LuaValue
@@ -481,5 +482,36 @@ class DemoExtensionsTest {
         val (host, ext) = load("profil")
         ext.onChannelMessage("open", profile)
         assertBudget(ext, host.shown!!, host)
+    }
+
+    @Test
+    fun `ui_kit modal - Escape goes to the app, Shift+Escape and repeated Escape always close`() {
+        val (host, ext) = load("profil")
+        ext.onChannelMessage("open", profile)
+        val session = host.shown!!
+        frame(session)
+        (session.textInputs.first { it.id == "nickname" }.box as FakeBox).type("x")
+        frame(session)
+        // unsaved changes: Escape opens the modal instead of closing
+        assertEquals(KeyResult.HANDLED, host.escape())
+        assertTrue(lua(ext, "profil_debug.V.ask").toboolean())
+        frame(session)
+        assertEquals(KeyResult.CLOSE, host.escape(shift = true), "Shift+Escape leaves the screen even with the modal open")
+        assertNull(host.shown)
+
+        // the same with three quick presses
+        host.clockSeconds += 20.0
+        ext.onChannelMessage("open", profile)
+        val again = host.shown!!
+        frame(again)
+        (again.textInputs.first { it.id == "nickname" }.box as FakeBox).type("y")
+        frame(again)
+        assertEquals(KeyResult.HANDLED, host.escape())
+        frame(again)
+        assertEquals(KeyResult.HANDLED, host.escape())
+        frame(again)
+        assertEquals(KeyResult.CLOSE, host.escape())
+        assertNull(host.shown)
+        assertTrue(ext.alive, host.failures.toString())
     }
 }

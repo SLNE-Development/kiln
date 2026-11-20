@@ -64,9 +64,9 @@ class V2Host : ExtensionHost {
     }
 
     /** Escape as the runtime handles it: Lua first, then close. */
-    fun escape(): LuaScreenSession.KeyResult {
+    fun escape(shift: Boolean = false): LuaScreenSession.KeyResult {
         val session = shown!!
-        val result = session.keyPressed("escape", LuaScreenSession.Mods(false, false, false))
+        val result = session.keyPressed("escape", LuaScreenSession.Mods(shift, false, false))
         if (result == LuaScreenSession.KeyResult.CLOSE) closeScreen(session)
         return result
     }

@@ -383,7 +383,11 @@ sie, gilt `false`). Tastennamen = Vanilla-`InputConstants`-Namen ohne `key.keybo
 **Lebenszyklus / Regeln:** `ui.open` ersetzt jeden offenen Screen (auch Vanilla/Server-Screens; ein ersetzter
 Lua-Screen bekommt `close(…, "replaced")`). Nicht während des Ladens, nicht aus `close` heraus (Fehler, verhindert
 Fallen), höchstens 10 Öffnungen pro 10 s. **Escape:** zuerst `key(…, "escape")` – `true` hält den Screen offen (z. B.
-Modal schließen), sonst schließt er (`close(…, "escape")`). **Tab/Shift+Tab** (wenn `key` nicht `true` liefert):
+Modal schließen), sonst schließt er (`close(…, "escape")`). **Garantierter Ausweg** (kann die Extension nicht
+blockieren): **Shift+Escape** schließt immer, ebenso das **dritte Escape innerhalb von 1,5 s** – ohne `key` zu fragen
+(`close(…, "escape")` läuft trotzdem). Danach liefert `ui.open` dieser Extension 10 s lang `false`, damit sie den
+Spieler nicht sofort wieder einfängt (HUD-Render, Kanal-Handler). Gilt auch für in Lua gezeichnete Modals (z. B. von
+`ui_kit`): sie sind Teil desselben Screens. Ein fokussiertes Textfeld bekommt Escape nie. **Tab/Shift+Tab** (wenn `key` nicht `true` liefert):
 Fokus auf das nächste/vorige Textfeld (Deklarationsreihenfolge). Disconnect, Entladen der Extension (auch wegen einer
 entladenen Abhängigkeit) oder ein Skriptfehler schließen den Screen **ohne** `close`. Der Server öffnet Screens nur
 indirekt: Kanal-Nachricht → Handler ruft `ui.open` (keine eigene Plattformfunktion). Keybinds werden in Lua-Screens
