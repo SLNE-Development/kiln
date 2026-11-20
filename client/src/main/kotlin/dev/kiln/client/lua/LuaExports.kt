@@ -24,8 +24,14 @@ import org.luaj.vm2.lib.VarArgFunction
  * it was made for, or `null` = unknown (`kiln.readonly`, which can end up anywhere). While an [ExportedFunction] runs,
  * its holder must have every permission a gated function inside needs; an unknown holder has none ("deny by
  * default"), so it does not matter by which path a holderless view travels. A view of another view is made for the
- * new holder ([wrap]): of the same exporter it is re-made for this holder, of another exporter (re-export) it is
- * nested, so every holder on the way is checked.
+ * new holder ([wrap]): a holderless one of the same exporter is re-made for this holder, any other is nested.
+ *
+ * **Invariant: a holder that is on a view is never lost.** Every way a view can travel - proxy reads, `pairs`,
+ * arguments and return values of exported functions ([adopt]), plain tables, callbacks - either passes the view
+ * object itself on, or wraps it into another view, which keeps the inner one. Only the unknown holder (`null`) is
+ * replaced. The one exception is a table proxy given back to its own exporter ([unwrap]): it becomes the real table
+ * again (the exporter may change its state objects); a table holds no rights, but raw gated functions the exporter
+ * itself stored in it are then raw again (documented limit, see `docs/lua-extensions.md`).
  *
  * Wrappers are cached per value so `ui.button == ui.button` holds; the caches are bounded ([MAX_CACHED]) and cleared
  * when full (identities of wrappers can then change, values never do).
@@ -45,10 +51,11 @@ class LuaExports(
     fun wrap(value: LuaValue): LuaValue = when {
         value is ReadOnlyProxy && value.exports === this -> value
         value is ExportedFunction && value.exports === this -> value
-        // a view of this exporter made for someone else (or for nobody: kiln.readonly): re-made for this holder
-        value is ReadOnlyProxy && value.exports.owner === owner -> wrap(value.target)
-        value is ExportedFunction && value.exports.owner === owner -> wrap(value.target)
-        // tables and functions, also views of other exporters (re-exports): nested, every holder stays
+        // a view of this exporter without holder (kiln.readonly): re-made for this holder, nothing is lost
+        value is ReadOnlyProxy && value.exports.owner === owner && value.exports.holder == null -> wrap(value.target)
+        value is ExportedFunction && value.exports.owner === owner && value.exports.holder == null -> wrap(value.target)
+        // tables and functions, also views with another holder (of this or another exporter): nested, so every
+        // holder stays (never re-made: that would drop the earlier holder, "holder laundering")
         value is LuaTable -> tables[value] ?: ReadOnlyProxy(value, this).also { cache(tables, value, it) }
         value.isfunction() -> functions[value] ?: ExportedFunction(value, this).also { cache(functions, value, it) }
         else -> value
@@ -62,14 +69,16 @@ class LuaExports(
     internal fun adopt(value: LuaValue): LuaValue =
         if (value is ReadOnlyProxy || value is ExportedFunction || value is GatedFunction) wrap(value) else value
 
-    /** The real table behind a proxy (also nested) made by this exporter (anything else unchanged). */
+    /** The real table behind a proxy (also nested, any holders) made by this exporter (anything else unchanged). */
     fun unwrap(value: LuaValue): LuaValue {
         var v = value
+        var result = value
         while (v is ReadOnlyProxy) {
-            if (v.exports.owner === owner) return v.target
+            val layer = v
             v = v.target
+            if (layer.exports.owner === owner) result = v
         }
-        return value
+        return result
     }
 
     private fun <V> cache(map: HashMap<LuaValue, V>, key: LuaValue, value: V) {

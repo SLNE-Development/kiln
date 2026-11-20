@@ -365,9 +365,16 @@ local ro = kiln.readonly(t) -- schreibgeschützte Sicht ohne Halter (für Rückg
   rechtepflichtige Funktion läuft darin, auch nicht für den Exporteur selbst (`kiln.readonly({ send = ch.send }).send`
   scheitert mit „unknown holder“; Funktionen ohne Recht laufen normal). Damit hängt die Sicherheit nicht davon ab, auf
   welchem Weg eine halterlose Sicht wandert. Damit legitime Nutzung weiter geht, bekommen Sichten den Halter, wo die
-  Runtime ihn kennt: Liest ein Importeur über *seine* Sicht eine Sicht desselben Exporteurs (z. B. ein
-  `readonly`-Feld des Exports), wird sie für ihn neu erzeugt; Sichten eines *anderen* Exporteurs (Re-Export
-  `base` → `mid` → `poor`) werden verschachtelt, sodass jeder Halter auf dem Weg das Recht braucht. Beim Aufruf einer
+  Runtime ihn kennt: Liest ein Importeur über *seine* Sicht eine **halterlose** Sicht desselben Exporteurs (z. B. ein
+  `readonly`-Feld des Exports), wird sie für ihn neu erzeugt; jede andere Sicht (anderer Halter, auch desselben
+  Exporteurs, oder Re-Export `base` → `mid` → `poor`) wird verschachtelt, sodass jeder Halter auf dem Weg das Recht
+  braucht. **Invariante: Ein Halter, der einmal auf einer Sicht steht, geht nie verloren** – auf jedem Weg (Lesen,
+  `pairs`, Argumente/Rückgaben, normale Tabellen, Callbacks) wird die Sicht entweder selbst weitergereicht oder
+  eingepackt; ersetzt wird nur der unbekannte Halter. (Vorher erzeugte das Neu-Einpacken auch Sichten mit Halter neu:
+  `b` ohne Recht gab eine Sicht an `c` mit Recht, beim Rückgeben an den Exporteur fiel `b` heraus – getestet über
+  alle Wege A → B → C → A.) Einzige Ausnahme: Ein Tabellen-Proxy, der an seinen Exporteur zurückgeht, wird wieder
+  die echte Tabelle (auch verschachtelt); eine Tabelle trägt keine Rechte, und solange der Aufruf des Importeurs
+  läuft, steht sein Halter auf dem Stapel. Beim Aufruf einer
   importierten Funktion bekommen Sichten und rohe rechtepflichtige API-Funktionen in Argumenten und Rückgabewerten
   (oberste Ebene) den Halter des Aufrufs. **Bekannte Grenze:** Legt der Exporteur eine *rohe* rechtepflichtige
   Funktion selbst in eine normale Tabelle, die er herausgibt (`return { send = ch.send }`), und kommt sie in einer
