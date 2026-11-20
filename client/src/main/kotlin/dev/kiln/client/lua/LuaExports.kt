@@ -15,9 +15,17 @@ import org.luaj.vm2.lib.VarArgFunction
  *   `table.insert/remove/sort`, `setmetatable` - is an error, `getmetatable` returns the string `"read-only"`.
  * - Functions become [ExportedFunction]s: they refuse to run once the exporting extension is unloaded, and hand
  *   proxies of the exporter's own tables back as the real tables (so the exporter can update state objects it gave
- *   out). Arguments and **return values are passed unchanged**: a function of an API extension returns what it
- *   wants to give out (fresh tables, or `kiln.readonly(t)` for shared ones).
+ *   out). Plain tables and Lua functions in arguments and return values are passed unchanged (a function of an API
+ *   extension returns what it wants to give out: fresh tables, or `kiln.readonly(t)` for shared ones); **views and
+ *   permission-gated API functions** in arguments and return values get the holder of the call ([adopt]).
  * - Strings, numbers, booleans, nil and item handles are immutable and passed as they are.
+ *
+ * **Holder** (see `docs/lua-extensions.md`, "Kein Ausleihen von Rechten"): every view knows its holder, the importer
+ * it was made for, or `null` = unknown (`kiln.readonly`, which can end up anywhere). While an [ExportedFunction] runs,
+ * its holder must have every permission a gated function inside needs; an unknown holder has none ("deny by
+ * default"), so it does not matter by which path a holderless view travels. A view of another view is made for the
+ * new holder ([wrap]): of the same exporter it is re-made for this holder, of another exporter (re-export) it is
+ * nested, so every holder on the way is checked.
  *
  * Wrappers are cached per value so `ui.button == ui.button` holds; the caches are bounded ([MAX_CACHED]) and cleared
  * when full (identities of wrappers can then change, values never do).
@@ -35,14 +43,34 @@ class LuaExports(
     private val functions = HashMap<LuaValue, ExportedFunction>()
 
     fun wrap(value: LuaValue): LuaValue = when {
-        value is ReadOnlyProxy || value is ExportedFunction -> value
+        value is ReadOnlyProxy && value.exports === this -> value
+        value is ExportedFunction && value.exports === this -> value
+        // a view of this exporter made for someone else (or for nobody: kiln.readonly): re-made for this holder
+        value is ReadOnlyProxy && value.exports.owner === owner -> wrap(value.target)
+        value is ExportedFunction && value.exports.owner === owner -> wrap(value.target)
+        // tables and functions, also views of other exporters (re-exports): nested, every holder stays
         value is LuaTable -> tables[value] ?: ReadOnlyProxy(value, this).also { cache(tables, value, it) }
         value.isfunction() -> functions[value] ?: ExportedFunction(value, this).also { cache(functions, value, it) }
         else -> value
     }
 
-    /** The real table behind a proxy made by this exporter (anything else unchanged). */
-    fun unwrap(value: LuaValue): LuaValue = if (value is ReadOnlyProxy && value.exports.owner === owner) value.target else value
+    /**
+     * A value crossing the boundary of a call of an [ExportedFunction] (argument or return value): views and gated API
+     * functions get this view's holder, so a raw gated function or a holderless view is not passed on without one.
+     * Plain tables and Lua functions stay as they are (their code is checked as the direct caller anyway).
+     */
+    internal fun adopt(value: LuaValue): LuaValue =
+        if (value is ReadOnlyProxy || value is ExportedFunction || value is GatedFunction) wrap(value) else value
+
+    /** The real table behind a proxy (also nested) made by this exporter (anything else unchanged). */
+    fun unwrap(value: LuaValue): LuaValue {
+        var v = value
+        while (v is ReadOnlyProxy) {
+            if (v.exports.owner === owner) return v.target
+            v = v.target
+        }
+        return value
+    }
 
     private fun <V> cache(map: HashMap<LuaValue, V>, key: LuaValue, value: V) {
         if (map.size >= MAX_CACHED) map.clear()
@@ -110,30 +138,45 @@ class ReadOnlyProxy internal constructor(internal val target: LuaTable, internal
 }
 
 /** See [LuaExports]. */
-class ExportedFunction internal constructor(internal val target: LuaValue, private val exports: LuaExports) : VarArgFunction() {
+class ExportedFunction internal constructor(internal val target: LuaValue, internal val exports: LuaExports) : VarArgFunction() {
     override fun invoke(args: Varargs): Varargs {
         if (!exports.owner.alive) throw LuaError("extension '${exports.owner.id}' is unloaded")
-        val holder = exports.holder ?: return call(args)
-        LuaExecution.pushHolder(holder)
+        // deny by default: a view without holder (kiln.readonly) runs gated functions for nobody
+        LuaExecution.pushHolder(exports.holder ?: LuaExecution.UNKNOWN_HOLDER)
         try {
-            return call(args)
+            return adoptAll(target.invoke(adoptAll(args, arguments = true)), arguments = false)
         } finally {
             LuaExecution.popHolder()
         }
     }
 
-    private fun call(args: Varargs): Varargs {
-        val n = args.narg()
-        var unwrapped: Array<LuaValue>? = null
+    /** Proxies of the exporter's own tables in [values] become the real tables again ([arguments]); see [LuaExports.adopt]. */
+    private fun adoptAll(values: Varargs, arguments: Boolean): Varargs {
+        val n = values.narg()
+        var changed: Array<LuaValue>? = null
         for (i in 1..n) {
-            val a = args.arg(i)
-            if (a is ReadOnlyProxy && a.exports.owner === exports.owner) {
-                if (unwrapped == null) unwrapped = Array(n) { args.arg(it + 1) }
-                unwrapped[i - 1] = a.target
+            val v = values.arg(i)
+            val u = exports.adopt(if (arguments) exports.unwrap(v) else v)
+            if (u !== v) {
+                if (changed == null) changed = Array(n) { values.arg(it + 1) }
+                changed[i - 1] = u
             }
         }
-        return target.invoke(if (unwrapped == null) args else LuaValue.varargsOf(unwrapped))
+        return if (changed == null) values else LuaValue.varargsOf(changed)
+    }
+
+    /** True if this wrapper (or a wrapper it wraps) wraps [function]. */
+    internal fun wraps(function: LuaValue): Boolean {
+        var v: LuaValue = this
+        while (v is ExportedFunction) {
+            v = v.target
+            if (v === function) return true
+        }
+        return false
     }
 
     override fun tojstring(): String = "function (exported by ${exports.owner.id})"
 }
+
+/** A permission-gated API function of [owner] (`kiln.net.channel`, `ch.send`, `ui.toast`, ...), see [LuaExtension.checkCaller]. */
+abstract class GatedFunction internal constructor(internal val owner: LuaExtension) : VarArgFunction()

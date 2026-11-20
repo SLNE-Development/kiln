@@ -40,6 +40,9 @@ object LuaExecution {
 
     internal fun pushHolder(holder: Any) { holders += holder }
 
+    /** Holder of a view nobody imported (`kiln.readonly`): has no permissions (see [LuaExports]). */
+    internal val UNKNOWN_HOLDER = Any()
+
     internal fun popHolder() { if (holders.isNotEmpty()) holders.removeAt(holders.size - 1) }
 
     internal fun enter(runtime: LuaRuntime, hook: SandboxHook) {

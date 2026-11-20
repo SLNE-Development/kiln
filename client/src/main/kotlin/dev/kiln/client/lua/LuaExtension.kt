@@ -186,6 +186,7 @@ class LuaExtension(
      *   library function (`tostring`, `table.sort`, ...), where the code that triggers it is not its caller;
      * - every importer holding an exported function that is running now ([ExportedFunction], [LuaExports.holder]):
      *   an imported function handed back to its exporter (callback, metamethod) does not lend the exporter's rights.
+     *   A view without holder (`kiln.readonly`) counts as a holder without permissions (deny by default).
      *
      * [function] is the gated function itself (to recognise its direct call).
      */
@@ -197,11 +198,14 @@ class LuaExtension(
             throw LuaError("permission '$permission' missing: extension '${principal.id}' cannot use it through '$id'")
         }
         for (holder in LuaExecution.activeHolders) {
+            if (holder === LuaExecution.UNKNOWN_HOLDER) {
+                throw LuaError("permission '$permission': API of '$id' reached through a read-only view with unknown holder (kiln.readonly)")
+            }
             if (holder is LuaExtension && holder !== this && permission !in holder.pkg.permissions) {
                 throw LuaError("permission '$permission' missing: extension '${holder.id}' cannot use it through a function it imported from '$id'")
             }
         }
-        val isTarget: (LuaValue) -> Boolean = { v -> function != null && (v === function || (v is ExportedFunction && v.target === function)) }
+        val isTarget: (LuaValue) -> Boolean = { v -> function != null && (v === function || (v is ExportedFunction && v.wraps(function))) }
         when (val caller = LuaExecution.caller(isTarget)) {
             LuaExecution.Caller.Host -> {}
             LuaExecution.Caller.Indirect -> throw LuaError("permission '$permission': API functions of '$id' may only be called directly (not as a metamethod or through a library function)")
@@ -480,7 +484,7 @@ class LuaExtension(
     }
 
     /** An API function that needs [permission] from this extension (it exists only then) and from the caller. */
-    private fun gated(permission: String, body: (Varargs) -> Varargs): LuaFunction = object : VarArgFunction() {
+    private fun gated(permission: String, body: (Varargs) -> Varargs): LuaFunction = object : GatedFunction(this) {
         override fun invoke(args: Varargs): Varargs {
             checkCaller(permission, this)
             return body(args)

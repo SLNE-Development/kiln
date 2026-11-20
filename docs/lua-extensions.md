@@ -318,7 +318,7 @@ Ohne Recht ist der API-Teil `nil` (wie v1). Immer vorhanden: `ui.lerpColor`, `ui
 ```lua
 kiln.export(value)          -- nur während des Ladens (main + require), genau einmal; meist eine Tabelle
 local ui = kiln.import(id)  -- id muss in "dependencies" stehen; Fehler, wenn nichts exportiert wurde
-local ro = kiln.readonly(t) -- schreibgeschützte Sicht auf eine eigene Tabelle (für Rückgabewerte)
+local ro = kiln.readonly(t) -- schreibgeschützte Sicht ohne Halter (für Rückgabewerte; rechtepflichtige Funktionen laufen darin nicht)
 ```
 
 ### Sicherheitsmodell beim Import
@@ -330,7 +330,9 @@ local ro = kiln.readonly(t) -- schreibgeschützte Sicht auf eine eigene Tabelle 
   geleert). Strings, Zahlen, Booleans und Item-Handles werden direkt übergeben.
 - **Argumente/Rückgaben:** Argumente gehen unverändert an die Funktion – außer Proxies *desselben* Exporteurs, die
   wieder zur echten Tabelle werden (ein Importeur kann Zustandsobjekte, die er von `ui_kit` bekam, an `ui_kit`
-  zurückgeben, und `ui_kit` darf sie ändern). **Rückgabewerte werden nicht verpackt**: Eine API-Extension gibt
+  zurückgeben, und `ui_kit` darf sie ändern). **Rückgabewerte werden nicht verpackt** (Ausnahme: Sichten und
+  rechtepflichtige API-Funktionen bekommen auf oberster Ebene einen Halter, siehe „Kein Ausleihen von Rechten“, gilt
+  ebenso für Argumente): Eine API-Extension gibt
   frische Tabellen zurück oder schützt geteilten Zustand selbst mit `kiln.readonly(t)`. Interne, geteilte
   Tabellen nie ungeschützt zurückgeben (sonst kann ein Importeur sie für andere Importeure ändern). Begründung:
   rekursives Verpacken von Rückgaben würde auch Tabellen des Aufrufers schreibschützen, die er nur durchreicht.
@@ -354,7 +356,24 @@ local ro = kiln.readonly(t) -- schreibgeschützte Sicht auf eine eigene Tabelle 
   auch der Halter das Recht. Gibt ein Importeur eine importierte Funktion an den Exporteur zurück (als Callback),
   verleiht sie ihm so keine Rechte des Exporteurs. Damit scheitert auch: `ui_kit` (ohne `channels`) bekommt
   von `shop` dessen rohes `ch.send` und ruft es in `shop`s Aufruf (Principal `shop`) auf; ein Importeur ruft in einem
-  Callback, den die API-Extension in ihrem eigenen Aufruf ausführt, deren exportierten Kanal auf. Damit der direkte
+  Callback, den die API-Extension in ihrem eigenen Aufruf ausführt, deren exportierten Kanal auf.
+  **Halter auf jedem Weg, unbekannter Halter = abgelehnt** (seit dem zweiten Security-Review, `LuaExportHolderTest`):
+  `kiln.readonly` erzeugt Sichten **ohne** Halter (sie können überall landen: Feld eines Exports, Rückgabewert,
+  Callback-Argument, Metamethode, `pairs`). Eine solche Sicht konnte ein Importeur ohne Recht dem Exporteur als
+  Callback zurückgeben, der sie dann in seinem eigenen Aufruf ausführte (ausnutzbar, Beleg im Test). Jetzt gilt
+  *deny by default*: Ein Wrapper ohne Halter läuft zwar, zählt aber als Halter **ohne** Rechte – keine
+  rechtepflichtige Funktion läuft darin, auch nicht für den Exporteur selbst (`kiln.readonly({ send = ch.send }).send`
+  scheitert mit „unknown holder“; Funktionen ohne Recht laufen normal). Damit hängt die Sicherheit nicht davon ab, auf
+  welchem Weg eine halterlose Sicht wandert. Damit legitime Nutzung weiter geht, bekommen Sichten den Halter, wo die
+  Runtime ihn kennt: Liest ein Importeur über *seine* Sicht eine Sicht desselben Exporteurs (z. B. ein
+  `readonly`-Feld des Exports), wird sie für ihn neu erzeugt; Sichten eines *anderen* Exporteurs (Re-Export
+  `base` → `mid` → `poor`) werden verschachtelt, sodass jeder Halter auf dem Weg das Recht braucht. Beim Aufruf einer
+  importierten Funktion bekommen Sichten und rohe rechtepflichtige API-Funktionen in Argumenten und Rückgabewerten
+  (oberste Ebene) den Halter des Aufrufs. **Bekannte Grenze:** Legt der Exporteur eine *rohe* rechtepflichtige
+  Funktion selbst in eine normale Tabelle, die er herausgibt (`return { send = ch.send }`), und kommt sie in einer
+  normalen Tabelle oder als Rückgabewert eines Callbacks zurück, sieht die Runtime sie nicht (rohe Tabellen werden
+  bewusst nicht verpackt). API-Extensions geben rechtepflichtige Funktionen deshalb nie roh in Tabellen heraus
+  (Empfehlung bleibt: API-Extensions brauchen keine Rechte). Damit der direkte
   Aufrufer stimmt, werden **Tail-Calls beim Kompilieren in normale Aufrufe umgeschrieben** (`TAILCALL A B 0; RETURN A 0`
   → `CALL A B 0; RETURN A 0`, gleiche Rückgabewerte; LuaJ führt Tail-Calls sonst erst nach dem Entfernen des
   aufrufenden Rahmens aus). Folge: Tail-Rekursion zählt auf die Aufruftiefe 200. Bewusst **nicht** jede Extension auf
