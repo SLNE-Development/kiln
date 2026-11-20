@@ -100,6 +100,7 @@ class ExtensionPackage(
             }
             val id = json.string("id") ?: fail("$MANIFEST: id missing")
             if (!Ids.isValidLuaExtensionId(id)) fail("$MANIFEST: invalid id '${printable(id)}'")
+            Ids.reservedNamespaceProblem(id)?.let { fail("$MANIFEST: $it") }
             if (expectedId != null && id != expectedId) fail("$MANIFEST: id '$id' does not match the announced id '$expectedId'")
             val version = json.string("version") ?: fail("$MANIFEST: version missing")
             if (version.isEmpty() || version.length > 64) fail("$MANIFEST: version must have 1-64 characters")

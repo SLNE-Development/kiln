@@ -38,6 +38,8 @@ class ExtensionHandshakeTest {
         }
         override fun unloadAll() { events += "unload" }
         override fun disconnect(reason: String) { events += "disconnect:$reason" }
+        val mods = HashSet<String>()
+        override fun isModLoaded(id: String) = id in mods
     }
 
     private fun zip(id: String, padding: Int = 0): ByteArray {
@@ -269,5 +271,63 @@ class ExtensionHandshakeTest {
         assertTrue(failing.error!!.contains("needed by shop"), failing.error)
         assertEquals(Status.FAILED, failing.items[1].status)
         assertEquals(listOf("shop"), failing.dependentsOf("ui_kit"))
+    }
+
+    @Test
+    fun `reserved namespaces fail the handshake before consent or download`() {
+        for (id in listOf("minecraft", "realms", "kiln", "fabric", "fabric_api", "c", "brigadier", "java", "mojang")) {
+            val io = FakeIo(trusted = true)
+            val h = ExtensionHandshake(io)
+            h.onWelcome(PROTOCOL_VERSION)
+            val data = zip(id)
+            h.onManifest(ExtensionManifest(listOf(info("a", a), info(id, data))))
+            assertEquals(Phase.FAILED, h.phase, id)
+            val ready = io.sent.single() as ExtensionsReady
+            assertFalse(ready.ok)
+            assertTrue(ready.error!!.contains("reserved namespace") && ready.error!!.contains("'$id'"), ready.error)
+            assertTrue(io.events.none { it.startsWith("consent") || it == "progress" }, io.events.toString())
+        }
+    }
+
+    @Test
+    fun `ids of installed Fabric mods fail the handshake`() {
+        val io = FakeIo(trusted = true)
+        io.mods += "sodium"
+        val h = ExtensionHandshake(io)
+        h.onWelcome(PROTOCOL_VERSION)
+        val data = zip("sodium")
+        h.onManifest(ExtensionManifest(listOf(info("sodium", data))))
+        assertEquals(Phase.FAILED, h.phase)
+        val ready = io.sent.single() as ExtensionsReady
+        assertTrue(ready.error!!.contains("installed mod"), ready.error)
+    }
+
+    @Test
+    fun `a package whose extension json claims a reserved id is rejected`() {
+        val error = org.junit.jupiter.api.assertThrows<ExtensionPackageException> { ExtensionPackage.read(zip("minecraft")) }
+        assertTrue(error.message!!.contains("reserved namespace"), error.message)
+    }
+
+    @Test
+    fun `textures and translation keys must not replace existing ones`() {
+        val existingTextures = setOf("minecraft:textures/gui/title/minecraft.png")
+        ExtensionNamespaces.checkTexture("shop", "shop:textures/icon.png", { it in existingTextures }, { false })
+        val texture = org.junit.jupiter.api.assertThrows<ExtensionPackageException> {
+            ExtensionNamespaces.checkTexture("shop", "shop:textures/icon.png", { false }, { it == "shop:textures/icon.png" })
+        }
+        assertTrue(texture.message!!.contains("already exists"), texture.message)
+        org.junit.jupiter.api.assertThrows<ExtensionPackageException> {
+            ExtensionNamespaces.checkTexture("shop", "shop:textures/icon.png", { it == "shop:textures/icon.png" }, { false })
+        }
+
+        val language = setOf("gui.done", "key.forward")
+        // an extension called "gui" cannot rename the vanilla "Done" button ...
+        val key = org.junit.jupiter.api.assertThrows<ExtensionPackageException> {
+            ExtensionNamespaces.checkTranslation("gui", "gui.done", emptySet()) { it in language }
+        }
+        assertTrue(key.message!!.contains("gui.done"), key.message)
+        // ... but may add new keys, and overwrite its own (en_us first, then the selected language)
+        ExtensionNamespaces.checkTranslation("gui", "gui.shop_title", emptySet()) { it in language }
+        ExtensionNamespaces.checkTranslation("shop", "shop.title", setOf("shop.title")) { true }
     }
 }

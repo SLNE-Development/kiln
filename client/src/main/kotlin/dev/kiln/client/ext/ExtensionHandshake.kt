@@ -43,6 +43,9 @@ class ExtensionHandshake(private val io: Io) {
         fun unloadAll()
 
         fun disconnect(reason: String)
+
+        /** `true` if a Fabric mod with this id is installed (its namespace is off limits for extensions). */
+        fun isModLoaded(id: String): Boolean = false
     }
 
     enum class Phase { WAIT_WELCOME, WAIT_MANIFEST, CONSENT, DOWNLOADING, LOADING, DONE, FAILED, DECLINED }
@@ -91,6 +94,8 @@ class ExtensionHandshake(private val io: Io) {
         if (phase != Phase.WAIT_MANIFEST) return fail("unexpected extension manifest")
         val infos = manifest.extensions
         if (infos.map { it.id }.toSet().size != infos.size) return fail("duplicate extension ids in the manifest")
+        // before consent and download: an extension must not take over the namespace of the game, kiln or a mod
+        for (info in infos) ExtensionNamespaces.problem(info.id, io::isModLoaded)?.let { return fail(it) }
         items = infos.map(::Item)
         if (io.isTrusted(grants)) {
             startDownload()

@@ -52,10 +52,10 @@ class ExtensionDependenciesTest {
         assertTrue(version.problems.single().contains("version 2.1"), version.problems.toString())
 
         val cycle = ExtensionDependencies.resolve(
-            listOf(pkg("a", deps = "\"b\""), pkg("b", deps = "\"c\""), pkg("c", deps = "\"a\""), pkg("free")),
+            listOf(pkg("a", deps = "\"b\""), pkg("b", deps = "\"d\""), pkg("d", deps = "\"a\""), pkg("free")),
         )
         assertTrue(cycle.problems.single().startsWith("Dependency cycle"), cycle.problems.toString())
-        assertTrue(cycle.problems.single().contains("a -> b -> c -> a"), cycle.problems.toString())
+        assertTrue(cycle.problems.single().contains("a -> b -> d -> a"), cycle.problems.toString())
     }
 
     @Test

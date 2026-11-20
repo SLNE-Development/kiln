@@ -75,6 +75,8 @@ object ExtensionPackager {
         if (!Ids.isValidLuaExtensionId(expectedId)) {
             throw InvalidExtensionException("Invalid extension id '$expectedId' (allowed: [a-z0-9_]{1,32})")
         }
+        // the id is the namespace of the package's textures and translation keys (see Ids.RESERVED_NAMESPACES)
+        Ids.reservedNamespaceProblem(expectedId)?.let { throw InvalidExtensionException(it) }
         if (files.size > MAX_FILES) throw InvalidExtensionException("Too many files (${files.size} > $MAX_FILES)")
         var total = 0L
         for ((path, bytes) in files) {

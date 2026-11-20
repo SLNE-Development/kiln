@@ -74,4 +74,21 @@ class ExtensionRegistryTest {
         registry.logProblems()
         assertTrue(records.any { it.message == "1 of at most ${ProtocolLimits.MAX_MANIFEST_EXTENSIONS} extensions registered" })
     }
+
+    @Test
+    fun `reserved namespaces are rejected when registering (API and folder packages)`(@TempDir dir: Path) {
+        val registry = ExtensionRegistry(logger, messenger)
+        for (id in listOf("minecraft", "realms", "kiln", "fabric", "fabric_api", "c", "brigadier", "java", "mojang")) {
+            val error = assertThrows<IllegalArgumentException> { registry.register(plugin, id, ExtensionSource.Directory(write(dir, id))) }
+            assertTrue(error.message!!.contains("reserved namespace"), error.message)
+        }
+        assertTrue(registry.packages.isEmpty(), "nothing reserved is delivered")
+
+        val folder = dir.resolve("extensions")
+        write(folder, "minecraft")
+        write(folder, "kiln_example")
+        registry.loadDirectory(plugin, folder)
+        assertEquals(listOf("kiln_example"), registry.packages.map { it.id }, "names merely starting with kiln stay allowed")
+        assertTrue(records.any { it.level == Level.SEVERE && it.message.contains("'minecraft' is a reserved namespace") })
+    }
 }

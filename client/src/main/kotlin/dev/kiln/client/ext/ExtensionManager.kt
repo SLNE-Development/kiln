@@ -24,7 +24,10 @@ import net.minecraft.client.Minecraft
 import net.minecraft.client.gui.GuiGraphicsExtractor
 import net.minecraft.client.renderer.texture.DynamicTexture
 import net.minecraft.network.chat.Component
+import net.minecraft.locale.Language
 import net.minecraft.resources.Identifier
+import dev.kiln.client.mixin.TextureManagerAccessor
+import net.fabricmc.loader.api.FabricLoader
 import org.slf4j.LoggerFactory
 
 /** Textures of the loaded extensions (`<ext>:textures/...png` -> size). */
@@ -69,6 +72,8 @@ class ExtensionManager(
      */
     fun load(pkg: ExtensionPackage) {
         try {
+            // the manifest was checked already (ExtensionHandshake); again here so no load path can skip it
+            ExtensionNamespaces.problem(pkg.id, FabricLoader.getInstance()::isModLoaded)?.let { throw ExtensionPackageException(it) }
             registerTextures(pkg)
             registerTranslations(pkg)
             val extension = LuaExtension(pkg, this, LuaLimits())
@@ -110,6 +115,11 @@ class ExtensionManager(
                 throw ExtensionPackageException("${pkg.id}: cannot decode $path")
             }
             val id = Identifier.fromNamespaceAndPath(pkg.id, path)
+            ExtensionNamespaces.checkTexture(
+                pkg.id, id.toString(),
+                registered = { id.toString() in textures || (minecraft.textureManager as TextureManagerAccessor).`kiln$getByPath`().containsKey(id) },
+                inResources = { minecraft.resourceManager.getResource(id).isPresent },
+            )
             minecraft.textureManager.register(id, DynamicTexture({ "kiln extension $id" }, image))
             textures[id.toString()] = intArrayOf(image.width, image.height)
         }
@@ -118,6 +128,8 @@ class ExtensionManager(
     /** `lang/en_us.json` and the current language; only keys in the extension's namespace (`<id>.…`). */
     private fun registerTranslations(pkg: ExtensionPackage) {
         val selected = minecraft.languageManager.selected
+        val language = Language.getInstance()
+        val own = HashSet<String>()
         for (locale in linkedSetOf("en_us", selected)) {
             val bytes = pkg.file("lang/$locale.json") ?: continue
             val json = try {
@@ -128,7 +140,9 @@ class ExtensionManager(
             var count = 0
             for ((key, value) in json.entrySet()) {
                 if (!key.startsWith(pkg.id + ".") || !value.isJsonPrimitive || ++count > 2_048) continue
+                ExtensionNamespaces.checkTranslation(pkg.id, key, own, language::has)
                 DynamicTranslations.put(key, value.asString.take(1_024))
+                own += key
                 translations += key
             }
         }

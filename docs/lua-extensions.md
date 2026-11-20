@@ -122,6 +122,20 @@ Paket). Widget `kiln.ui.widget("x:gauge", …)` ↔ Server `custom(…, Key("x",
 `kiln.net.channel("hello")` in `x` ↔ `ExtensionMessage` mit Kanal `x:hello`. Namen von Kanälen/Widgets:
 `[a-z0-9_]{1,32}`.
 
+**Reservierte Namensräume:** Die Id ist Namensraum der Texturen und Präfix der Sprachschlüssel (`x.…`); eine
+Extension mit fremdem Namensraum könnte Texturen und Texte des Spiels, des Loaders oder von kiln ersetzen (z. B. den
+Zustimmungs-Screen fälschen). Abgelehnt werden deshalb (gemeinsame Liste `Ids.RESERVED_NAMESPACES` im
+`protocol`-Modul): `minecraft`, `realms`, `mojang`, `brigadier`, `java`, `kiln`, `fabric` und alles mit Präfix
+`fabric`, `c`, `forge`, `neoforge`, `quilt` und alles mit Präfix `quilt`.
+- **Server:** beim Registrieren (`ExtensionPackager.build`): API → `IllegalArgumentException`, Ordner-Paket → SEVERE-Log
+  und übersprungen.
+- **Client:** beim Empfang des Manifests, vor Zustimmung und Download (`ExtensionHandshake.onManifest`), zusätzlich
+  Ids installierter Fabric-Mods (`FabricLoader.isModLoaded`) → `ExtensionsReady(false, Grund)` → Kick; beim Lesen des
+  Pakets und beim Laden noch einmal. Beim Laden wird außerdem jede Textur abgelehnt, deren Identifier schon im
+  `TextureManager` registriert ist oder als Ressource existiert, und jeder Sprachschlüssel, den die Sprache schon
+  kennt (außer von derselben Extension, `en_us` wird von der gewählten Sprache überschrieben) → Ladefehler. So kann
+  z. B. eine Extension `gui` nicht `gui.done` umbenennen.
+
 **`ExtensionMessage(channel, json)`** (Play-Phase, beide Richtungen): `json` ist genau ein JSON-Wert als Text
 (Client→Server ≤ 16 384 Zeichen, Server→Client ≤ 262 144 Zeichen seit v5; Lua-Tabellen i. d. R. als Objekt). Verschachtelungstiefe ≤ 16. Server: höchstens 40
 Nachrichten/s pro Spieler (Überschuss verworfen), ungültiges JSON wird verworfen und geloggt (Debug).

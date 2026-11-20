@@ -36,6 +36,7 @@ import dev.kiln.protocol.Viewport
 import dev.kiln.protocol.Welcome
 import dev.kiln.protocol.codec.MessageCodec
 import net.fabricmc.fabric.api.client.networking.v1.ClientConfigurationNetworking
+import net.fabricmc.loader.api.FabricLoader
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking
 import net.fabricmc.fabric.impl.networking.RegistrationPayload
 import net.minecraft.client.Minecraft
@@ -135,6 +136,8 @@ class KilnClientImpl(
         override fun load(pkg: ExtensionPackage) = extensions.load(pkg)
 
         override fun unloadAll() = extensions.unloadAll()
+
+        override fun isModLoaded(id: String) = FabricLoader.getInstance().isModLoaded(id)
 
         override fun disconnect(reason: String) {
             (listener as ClientCommonPacketListenerAccessor).`kiln$getConnection`().disconnect(Component.literal(reason))
