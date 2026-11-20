@@ -1,17 +1,12 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="320" height="100" viewBox="0 0 320 100" role="img" aria-label="Kiln">
-  <!-- for dark backgrounds -->
+<svg xmlns="http://www.w3.org/2000/svg" width="311" height="100" viewBox="0 0 311 100" role="img" aria-label="Kiln">
+  <!-- for dark backgrounds; word: Montserrat Medium (SIL Open Font License 1.1), converted to paths -->
   <path d="M50 8 L86 29 L86 71 L50 92 L14 71 L14 29 Z" fill="none" stroke="#E8EAEC" stroke-width="7" stroke-linejoin="round"/>
   <path d="M50 34 L64 42 L64 58 L50 66 L36 58 L36 42 Z" fill="#FF7A1A"/>
   <path d="M50 42 L57 46 L57 54 L50 58 L43 54 L43 46 Z" fill="#FFC24A"/>
   <g fill="#E8EAEC">
-    <rect x="120" y="26" width="9" height="48"/>
-    <polygon points="129,46 151,26 164,26 129,58"/>
-    <polygon points="137,49 164,74 151,74 130,56"/>
-    <rect x="177" y="26" width="9" height="48"/>
-    <rect x="200" y="26" width="9" height="48"/>
-    <rect x="200" y="65" width="32" height="9"/>
-    <rect x="249" y="26" width="9" height="48"/>
-    <rect x="280" y="26" width="9" height="48"/>
-    <polygon points="249,26 259,26 289,74 279,74"/>
+    <path transform="translate(118.00 73.00) scale(0.06571 -0.06571)" d="M333 311 205 181V0H105V700H205V309L585 700H699L400 385L718 0H601Z"/>
+    <path transform="translate(171.82 73.00) scale(0.06571 -0.06571)" d="M105 700H205V0H105Z"/>
+    <path transform="translate(198.76 73.00) scale(0.06571 -0.06571)" d="M105 700H205V87H584V0H105Z"/>
+    <path transform="translate(244.37 73.00) scale(0.06571 -0.06571)" d="M707 700V0H625L205 522V0H105V700H187L607 178V700Z"/>
   </g>
 </svg>
