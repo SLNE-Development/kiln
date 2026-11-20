@@ -31,14 +31,27 @@ object LuaExecution {
 
     val active: Boolean get() = principal != null
 
+    /**
+     * Holders of the exported functions running now ([ExportedFunction.holder], innermost last): an importer that
+     * calls (or hands on) a function it imported adds its own permissions to the check of everything that runs inside.
+     */
+    private val holders = ArrayList<Any>()
+    val activeHolders: List<Any> get() = holders
+
+    internal fun pushHolder(holder: Any) { holders += holder }
+
+    internal fun popHolder() { if (holders.isNotEmpty()) holders.removeAt(holders.size - 1) }
+
     internal fun enter(runtime: LuaRuntime, hook: SandboxHook) {
         principal = runtime
         activeHook = hook
+        holders.clear()
     }
 
     internal fun exit() {
         principal = null
         activeHook = null
+        holders.clear()
     }
 
     /** Owner (environment) of every compiled function prototype; closures can only come from these (no `load`). */
@@ -78,16 +91,23 @@ object LuaExecution {
 
         /** A Lua function whose owner is unknown (must not happen; treated as "deny"). */
         data object Unknown : Caller
+
+        /** Not called directly by Lua code: a metamethod or a library function in between (denied for gated functions). */
+        data object Indirect : Caller
     }
 
     /**
-     * The direct Lua caller of the running host function: the owner of the innermost Lua frame of the current call
-     * (pcall frames skipped). Frames are tracked by the principal's hook ([SandboxHook]), which every extension's
-     * hook forwards to, so this works across extensions.
+     * The direct Lua caller of the running host function [isTarget] (the function itself, or a wrapper of it): the
+     * owner of the Lua frame whose `CALL` (or `pcall(f, ...)`) invokes it ([SandboxHook.directCall]). Frames are
+     * tracked by the principal's hook, which every extension's hook forwards to, so this works across extensions.
      */
-    fun caller(): Caller {
+    fun caller(isTarget: (LuaValue) -> Boolean): Caller {
         val hook = activeHook ?: return Caller.Host
-        val closure = hook.innermostClosure() ?: return Caller.Host
+        val closure = when (val call = hook.directCall(isTarget)) {
+            SandboxHook.Call.FromHost -> return Caller.Host
+            SandboxHook.Call.Indirect -> return Caller.Indirect
+            is SandboxHook.Call.Direct -> call.closure
+        }
         val globals = owners[closure.p]?.get() ?: return Caller.Unknown
         val runtime = (globals.debuglib as? SandboxHook)?.runtime ?: return Caller.Unknown
         return Caller.Script(runtime)

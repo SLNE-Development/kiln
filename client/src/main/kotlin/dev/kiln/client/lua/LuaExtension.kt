@@ -107,8 +107,13 @@ class LuaExtension(
     var exported: LuaValue = LuaValue.NIL
         private set
 
-    /** Read-only views of this extension's values for importers. */
+    /** Read-only views of this extension's values (`kiln.readonly`, no holder). */
     val exports = LuaExports(this)
+
+    private val importerViews = HashMap<LuaExtension, LuaExports>()
+
+    /** Read-only views of this extension's export for [importer] (functions remember their holder). */
+    fun exportsFor(importer: LuaExtension): LuaExports = importerViews.getOrPut(importer) { LuaExports(this, importer) }
 
     val items = LuaItems({ host.decodeItem(it) })
 
@@ -176,17 +181,30 @@ class LuaExtension(
      *   one: outside a runtime call no gated function runs;
      * - the extension whose Lua code called the function directly ([LuaExecution.caller]): a raw API function handed
      *   to (or stolen by) another extension cannot be used by that extension's code, also not inside a call of this
-     *   extension (e.g. a callback of the other extension that this one runs).
+     *   extension (e.g. a callback of the other extension that this one runs). The call must be direct: a `CALL` of
+     *   Lua code or `pcall(f, ...)`; never as a metamethod (`__index`, `__tostring`, `__call`, ...) or through a
+     *   library function (`tostring`, `table.sort`, ...), where the code that triggers it is not its caller;
+     * - every importer holding an exported function that is running now ([ExportedFunction], [LuaExports.holder]):
+     *   an imported function handed back to its exporter (callback, metamethod) does not lend the exporter's rights.
+     *
+     * [function] is the gated function itself (to recognise its direct call).
      */
-    internal fun checkCaller(permission: String) {
+    internal fun checkCaller(permission: String, function: LuaValue? = null) {
         if (!has(permission)) throw LuaError("permission '$permission' missing: extension '$id' does not have it")
         val principal = LuaExecution.principal?.owner as? LuaExtension
             ?: throw LuaError("permission '$permission': API of '$id' used outside a call of the runtime")
         if (principal !== this && permission !in principal.pkg.permissions) {
             throw LuaError("permission '$permission' missing: extension '${principal.id}' cannot use it through '$id'")
         }
-        when (val caller = LuaExecution.caller()) {
+        for (holder in LuaExecution.activeHolders) {
+            if (holder is LuaExtension && holder !== this && permission !in holder.pkg.permissions) {
+                throw LuaError("permission '$permission' missing: extension '${holder.id}' cannot use it through a function it imported from '$id'")
+            }
+        }
+        val isTarget: (LuaValue) -> Boolean = { v -> function != null && (v === function || (v is ExportedFunction && v.target === function)) }
+        when (val caller = LuaExecution.caller(isTarget)) {
             LuaExecution.Caller.Host -> {}
+            LuaExecution.Caller.Indirect -> throw LuaError("permission '$permission': API functions of '$id' may only be called directly (not as a metamethod or through a library function)")
             LuaExecution.Caller.Unknown -> throw LuaError("permission '$permission': caller of '$id' API is unknown")
             is LuaExecution.Caller.Script -> {
                 val owner = caller.runtime.owner as? LuaExtension
@@ -464,7 +482,7 @@ class LuaExtension(
     /** An API function that needs [permission] from this extension (it exists only then) and from the caller. */
     private fun gated(permission: String, body: (Varargs) -> Varargs): LuaFunction = object : VarArgFunction() {
         override fun invoke(args: Varargs): Varargs {
-            checkCaller(permission)
+            checkCaller(permission, this)
             return body(args)
         }
     }
@@ -483,7 +501,7 @@ class LuaExtension(
         val dependency = host.extension(depId) ?: throw LuaError("dependency '$depId' is not loaded")
         if (!dependency.alive) throw LuaError("dependency '$depId' is unloaded")
         if (dependency.exported.isnil()) throw LuaError("'$depId' exports nothing (kiln.export)")
-        return dependency.exports.wrap(dependency.exported)
+        return dependency.exportsFor(this).wrap(dependency.exported)
     }
 
     // ---- screens ------------------------------------------------------------------------------------------

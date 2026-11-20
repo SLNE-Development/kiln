@@ -22,7 +22,15 @@ import org.luaj.vm2.lib.VarArgFunction
  * Wrappers are cached per value so `ui.button == ui.button` holds; the caches are bounded ([MAX_CACHED]) and cleared
  * when full (identities of wrappers can then change, values never do).
  */
-class LuaExports(internal val owner: LuaExtension) {
+class LuaExports(
+    internal val owner: LuaExtension,
+    /**
+     * The importer these views were made for (`kiln.import`), `null` for `kiln.readonly` views. Every exported
+     * function remembers it: whoever ends up calling it - the holder itself, or the exporter's own code after the
+     * holder handed the function back (as callback, metamethod, ...) - needs the holder's permissions as well.
+     */
+    internal val holder: LuaExtension? = null,
+) {
     private val tables = HashMap<LuaValue, ReadOnlyProxy>()
     private val functions = HashMap<LuaValue, ExportedFunction>()
 
@@ -34,7 +42,7 @@ class LuaExports(internal val owner: LuaExtension) {
     }
 
     /** The real table behind a proxy made by this exporter (anything else unchanged). */
-    fun unwrap(value: LuaValue): LuaValue = if (value is ReadOnlyProxy && value.exports === this) value.target else value
+    fun unwrap(value: LuaValue): LuaValue = if (value is ReadOnlyProxy && value.exports.owner === owner) value.target else value
 
     private fun <V> cache(map: HashMap<LuaValue, V>, key: LuaValue, value: V) {
         if (map.size >= MAX_CACHED) map.clear()
@@ -102,14 +110,24 @@ class ReadOnlyProxy internal constructor(internal val target: LuaTable, internal
 }
 
 /** See [LuaExports]. */
-class ExportedFunction internal constructor(private val target: LuaValue, private val exports: LuaExports) : VarArgFunction() {
+class ExportedFunction internal constructor(internal val target: LuaValue, private val exports: LuaExports) : VarArgFunction() {
     override fun invoke(args: Varargs): Varargs {
         if (!exports.owner.alive) throw LuaError("extension '${exports.owner.id}' is unloaded")
+        val holder = exports.holder ?: return call(args)
+        LuaExecution.pushHolder(holder)
+        try {
+            return call(args)
+        } finally {
+            LuaExecution.popHolder()
+        }
+    }
+
+    private fun call(args: Varargs): Varargs {
         val n = args.narg()
         var unwrapped: Array<LuaValue>? = null
         for (i in 1..n) {
             val a = args.arg(i)
-            if (a is ReadOnlyProxy && a.exports === exports) {
+            if (a is ReadOnlyProxy && a.exports.owner === exports.owner) {
                 if (unwrapped == null) unwrapped = Array(n) { args.arg(it + 1) }
                 unwrapped[i - 1] = a.target
             }

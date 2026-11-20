@@ -52,6 +52,9 @@ class SandboxHook(private val limits: LuaLimits) : DebugLib() {
 
     private var closures = arrayOfNulls<LuaClosure>(64)
     private var stacks = arrayOfNulls<Array<LuaValue>>(64)
+
+    /** Program counter of the instruction each frame executes (for a caller frame: the call in progress). */
+    private var pcs = IntArray(64)
     private var depth = 0
 
     /** Prepares a new outermost call with [budget] instructions. */
@@ -64,10 +67,52 @@ class SandboxHook(private val limits: LuaLimits) : DebugLib() {
         }
     }
 
-    /** The innermost Lua function of the running call (frames of `pcall` skipped), or `null`. */
-    fun innermostClosure(): LuaClosure? {
-        for (i in depth - 1 downTo 0) closures[i]?.let { return it }
-        return null
+    /** How the host function that runs now was reached (see [directCall]). */
+    sealed interface Call {
+        /** No Lua frame: the host called it (e.g. as a registered callback). */
+        data object FromHost : Call
+
+        /** A `CALL` instruction of [closure] calls it, directly or as `pcall(f, ...)`. */
+        data class Direct(val closure: LuaClosure) : Call
+
+        /** Anything else: a metamethod (`__index`, `__tostring`, `__concat`, `__eq`, `__call`, ...) or a library function. */
+        data object Indirect : Call
+    }
+
+    /**
+     * Checks that the host function running now is called **directly** by Lua code: the innermost frame executes an
+     * `OP_CALL` whose function register holds it ([isTarget]), or that frame is a `pcall` whose first argument is
+     * it. Metamethods run while the frame executes another instruction (`GETTABLE`, `CONCAT`, `EQ`, ...), and
+     * functions called by library functions (`tostring`, `table.sort`, `string.gsub`, ...) are not in the register
+     * of the `CALL` in progress, so both are [Call.Indirect]. Native functions do not get frames of their own, except
+     * `pcall` (an empty frame).
+     */
+    fun directCall(isTarget: (LuaValue) -> Boolean): Call {
+        if (depth == 0) return Call.FromHost
+        var i = depth - 1
+        var viaPcall = false
+        if (closures[i] == null) {
+            viaPcall = true
+            i--
+            if (i < 0 || closures[i] == null) return Call.Indirect
+        }
+        val closure = closures[i]!!
+        val stack = stacks[i] ?: return Call.Indirect
+        val code = closure.p.code
+        val pc = pcs[i]
+        if (pc !in code.indices) return Call.Indirect
+        val instruction = code[pc]
+        if (Lua.GET_OPCODE(instruction) != Lua.OP_CALL) return Call.Indirect
+        val a = Lua.GETARG_A(instruction)
+        val callee = if (viaPcall) a + 1 else a
+        if (callee >= stack.size) return Call.Indirect
+        if (viaPcall && stack[a].javaClass.name != PCALL_CLASS) return Call.Indirect
+        return if (isTarget(stack[callee])) Call.Direct(closure) else Call.Indirect
+    }
+
+    private companion object {
+        /** LuaJ's `pcall` (the only library function that gets a frame). */
+        const val PCALL_CLASS = "org.luaj.vm2.lib.BaseLib\$pcall"
     }
 
     /** Instructions consumed since [begin] with [budget]. */
@@ -91,9 +136,11 @@ class SandboxHook(private val limits: LuaLimits) : DebugLib() {
         if (depth == closures.size) {
             closures = closures.copyOf(depth * 2)
             stacks = stacks.copyOf(depth * 2)
+            pcs = pcs.copyOf(depth * 2)
         }
         closures[depth] = closure
         stacks[depth] = stack
+        pcs[depth] = -1
         depth++
     }
 
@@ -112,6 +159,7 @@ class SandboxHook(private val limits: LuaLimits) : DebugLib() {
         executed++
         if (--remaining < 0) throw LuaLimitExceeded("instruction budget exceeded")
         if (depth == 0) return
+        pcs[depth - 1] = pc
         val closure = closures[depth - 1] ?: return
         val code = closure.p.code
         if (pc < 0 || pc >= code.size) return

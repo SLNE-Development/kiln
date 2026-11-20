@@ -345,7 +345,14 @@ local ro = kiln.readonly(t) -- schreibgeschützte Sicht auf eine eigene Tabelle 
   (2) dem Principal – ohne Principal (Host-Code außerhalb eines Runtime-Aufrufs) läuft sie gar nicht – und (3) der
   Extension, deren Lua-Code sie direkt aufruft (`LuaExecution.caller()`: Besitzer der innersten Lua-Funktion auf dem
   Stapel, `pcall`-Rahmen übersprungen; Besitz über die kompilierten Prototypen). Wirksam ist die Schnittmenge; ein
-  Callback läuft nie mit mehr Rechten als sein Besitzer. Damit scheitert auch: `ui_kit` (ohne `channels`) bekommt
+  Callback läuft nie mit mehr Rechten als sein Besitzer. Der Aufruf muss **direkt** sein: ein `CALL` von Lua-Code
+  oder `pcall(f, …)` (der Hook merkt sich pro Rahmen die laufende Instruktion und prüft, dass deren
+  Funktionsregister die rechtepflichtige Funktion bzw. ihren Export-Wrapper enthält). Als **Metamethode** (`__index`,
+  `__tostring`, `__concat`, `__eq`, `__lt`, `__call`, …) oder über eine **Bibliotheksfunktion** (`tostring`,
+  `table.sort`, `string.gsub`, …) läuft sie nie – dort ist der Code, der sie auslöst, nicht ihr Aufrufer. Außerdem
+  merkt sich jede **importierte Funktion ihren Halter** (den Importeur, `LuaExports.holder`): Solange sie läuft, braucht
+  auch der Halter das Recht. Gibt ein Importeur eine importierte Funktion an den Exporteur zurück (als Callback),
+  verleiht sie ihm so keine Rechte des Exporteurs. Damit scheitert auch: `ui_kit` (ohne `channels`) bekommt
   von `shop` dessen rohes `ch.send` und ruft es in `shop`s Aufruf (Principal `shop`) auf; ein Importeur ruft in einem
   Callback, den die API-Extension in ihrem eigenen Aufruf ausführt, deren exportierten Kanal auf. Damit der direkte
   Aufrufer stimmt, werden **Tail-Calls beim Kompilieren in normale Aufrufe umgeschrieben** (`TAILCALL A B 0; RETURN A 0`

@@ -227,10 +227,81 @@ class LuaPermissionBorrowingTest {
         """.trimIndent()))
         // kit (with channels) is the principal in both of its own entry points, but poor's code makes the call
         kit.onKey("go", true)
-        assertTrue(poor.runtime.globals.get("result").tojstring().contains("code of extension 'poor' cannot use it through 'kit'"))
+        assertTrue(poor.runtime.globals.get("result").tojstring().contains("permission 'channels' missing: extension 'poor'"))
         kit.onChannelMessage("x", "{}")
         assertTrue(poor.runtime.globals.get("result").tojstring().contains("permission 'channels' missing"))
         assertTrue(host.sent.isEmpty())
         assertTrue(kit.alive && poor.alive, host.failures.toString())
+    }
+
+    /** `kit` (with channels) exports its channel and runs callbacks/reads items importers registered, in its own calls. */
+    private val deputySource = """
+        local ch = kiln.net.channel("x")
+        local callbacks, items = {}, {}
+        local function run()
+          for _, f in ipairs(callbacks) do pcall(f, { event = "tick" }) end
+          for _, item in ipairs(items) do
+            pcall(function() return item.label end)            -- __index
+            pcall(function() return tostring(item) end)        -- __tostring through a library function
+            pcall(function() return "x" .. item end)           -- __concat
+            pcall(function() return item == items end)         -- __eq (different tables)
+            pcall(function() return item < item end)           -- __lt
+            pcall(function() return item() end)                -- __call
+            pcall(table.sort, { item, item, item }, function(a, b) return false end)
+          end
+        end
+        kiln.keys.bind("go", { press = run })
+        kiln.export({ channel = ch, onEvent = function(f) callbacks[#callbacks + 1] = f end,
+                      addItem = function(t) items[#items + 1] = t end })
+    """.trimIndent()
+
+    @Test
+    fun `exported API functions handed back as callbacks or metamethods cannot make the exporter send`() {
+        val host = V2Host()
+        val kit = host.load(pkg("kit", setOf("channels", "keybinds"), files = *arrayOf("main.lua" to deputySource)))
+        val poor = host.load(pkg("poor", setOf("widgets"), listOf("kit"), "main.lua" to """
+            local kit = kiln.import("kit")
+            local send = kit.channel.send
+            kit.onEvent(send)                                       -- the function value itself as callback
+            local mt = { __index = send, __tostring = send, __concat = send, __eq = send, __lt = send, __call = send }
+            kit.addItem(setmetatable({ stolen = true }, mt))        -- metamethods dispatched by kit's code
+        """.trimIndent()))
+        kit.onKey("go", true)
+        assertEquals(emptyList<String>(), sentVia(host))
+        assertTrue(kit.alive && poor.alive, host.failures.toString())
+    }
+
+    @Test
+    fun `a raw API function cannot run as a metamethod or through a library function`() {
+        val host = V2Host()
+        val lib = host.load(pkg("lib", files = *arrayOf("main.lua" to """
+            local fn
+            kiln.export({
+              register = function(f) fn = f end,
+              -- tables whose metamethods are the app's own send; the APP's code triggers them
+              make = function() return setmetatable({}, { __index = fn, __tostring = fn, __call = fn }) end,
+              wrapped = function() return fn end,
+            })
+        """.trimIndent())))
+        val app = host.load(pkg("app", setOf("channels"), listOf("lib"), "main.lua" to """
+            local lib = kiln.import("lib")
+            local ch = kiln.net.channel("c")
+            lib.register(ch.send)
+            ch:on(function()
+              local t = lib.make()
+              pcall(function() return t.label end)
+              pcall(function() return tostring(t) end)
+              pcall(function() return t() end)
+              pcall(table.sort, { 1, 2, 3 }, ch.send)
+              pcall(string.gsub, "abc", "b", ch.send)
+              -- direct calls (also through pcall) by the owner keep working
+              assert(pcall(ch.send, ch, { via = "pcall" }))
+              ch:send({ via = "direct" })
+              lib.wrapped()(ch, { via = "handed back" }) -- the app's own raw function, returned unwrapped
+            end)
+        """.trimIndent()))
+        app.onChannelMessage("c", "{}")
+        assertEquals(listOf("""app:c {"via":"pcall"}""", """app:c {"via":"direct"}""", """app:c {"via":"handed back"}"""), sentVia(host))
+        assertTrue(app.alive && lib.alive, host.failures.toString())
     }
 }
