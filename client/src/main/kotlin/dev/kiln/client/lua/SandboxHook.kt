@@ -39,6 +39,10 @@ class LuaLimitExceeded(message: String) : Error(message, null, false, false)
  * caller pays for everything that runs in its call, including code of other extensions.
  */
 class SandboxHook(private val limits: LuaLimits) : DebugLib() {
+    /** The runtime this hook belongs to (owner of the closures compiled for its globals, [LuaExecution.caller]). */
+    var runtime: LuaRuntime? = null
+        internal set
+
     /** Instructions left in the current call. */
     var remaining: Long = 0
 
@@ -58,6 +62,12 @@ class SandboxHook(private val limits: LuaLimits) : DebugLib() {
             stacks.fill(null)
             depth = 0
         }
+    }
+
+    /** The innermost Lua function of the running call (frames of `pcall` skipped), or `null`. */
+    fun innermostClosure(): LuaClosure? {
+        for (i in depth - 1 downTo 0) closures[i]?.let { return it }
+        return null
     }
 
     /** Instructions consumed since [begin] with [budget]. */

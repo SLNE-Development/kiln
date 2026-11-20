@@ -224,7 +224,7 @@ eine schreibgeschützte Tabelle mit `__metatable = "string"` ersetzt (`getmetata
 
 **Limits** (`LuaLimits`): Instruktionen gezählt über `Globals.debuglib` (eigener Hook ohne Lua-Bindung, LuaJ ruft
 ihn vor jeder VM-Instruktion): 100 000 pro Aufruf, 2 000 000 beim Laden, 6 000 000 pro Sekunde und Extension.
-Überschreitung wirft einen `Error` (von `pcall` nicht fangbar). Aufruftiefe 200. Strings ≤ 1 MiB (geprüft vor
+Überschreitung wirft einen `Error` (von `pcall` nicht fangbar). Aufruftiefe 200 (auch Tail-Calls, siehe „Kein Ausleihen von Rechten“). Strings ≤ 1 MiB (geprüft vor
 `..`, `string.rep`, `gsub`, `table.concat`; `format` danach), `table.unpack` ≤ 4096 Werte, Lua-Speicher ≈ 16 MiB
 (Schätzung über erreichbare Tabellen/Closures/Strings, alle 1 M Instruktionen). Bekannte Lücke: LuaJs
 Pattern-Matching läuft in Java und wird nicht gezählt.
@@ -339,10 +339,23 @@ local ro = kiln.readonly(t) -- schreibgeschützte Sicht auf eine eigene Tabelle 
   prüfen **zusätzlich** zum eigenen Manifest, dass der Principal das Recht hat. Ruft `shop` (ohne `channels`) eine
   `ui_kit`-Funktion auf, die über `ui_kit`s Kanal sendet → Fehler „permission 'channels' missing: extension 'shop'
   cannot use it through 'ui_kit'“. Umgekehrt: Ruft `ui_kit` in *seinem* Aufruf (z. B. eigener Keybind) einen
-  gespeicherten Callback von `shop` auf, prüfen `shop`s API-Funktionen gegen `ui_kit` als Principal. Wirksam ist
-  also immer die Schnittmenge aus Principal und Besitzer der API-Tabelle. Entscheidung: Principal statt
-  Aufrufstapel-Analyse, weil Lua-Closures ohne Markierung zwischen Extensions wandern; die Regel ist einfach, testbar
-  und erweitert nie die eigenen Rechte. Empfehlung: API-Extensions wie `ui_kit` brauchen **keine** Rechte; alles für
+  gespeicherten Callback von `shop` auf, prüfen `shop`s API-Funktionen gegen `ui_kit` als Principal.
+  **Zusätzlich direkter Aufrufer** (seit dem Security-Review): Eine rechtepflichtige Funktion verlangt das Recht von
+  (1) ihrem Besitzer (`this`; Funktionen ohne Recht existieren ohnehin nicht – geprüft als Defense-in-depth),
+  (2) dem Principal – ohne Principal (Host-Code außerhalb eines Runtime-Aufrufs) läuft sie gar nicht – und (3) der
+  Extension, deren Lua-Code sie direkt aufruft (`LuaExecution.caller()`: Besitzer der innersten Lua-Funktion auf dem
+  Stapel, `pcall`-Rahmen übersprungen; Besitz über die kompilierten Prototypen). Wirksam ist die Schnittmenge; ein
+  Callback läuft nie mit mehr Rechten als sein Besitzer. Damit scheitert auch: `ui_kit` (ohne `channels`) bekommt
+  von `shop` dessen rohes `ch.send` und ruft es in `shop`s Aufruf (Principal `shop`) auf; ein Importeur ruft in einem
+  Callback, den die API-Extension in ihrem eigenen Aufruf ausführt, deren exportierten Kanal auf. Damit der direkte
+  Aufrufer stimmt, werden **Tail-Calls beim Kompilieren in normale Aufrufe umgeschrieben** (`TAILCALL A B 0; RETURN A 0`
+  → `CALL A B 0; RETURN A 0`, gleiche Rückgabewerte; LuaJ führt Tail-Calls sonst erst nach dem Entfernen des
+  aufrufenden Rahmens aus). Folge: Tail-Rekursion zählt auf die Aufruftiefe 200. Bewusst **nicht** jede Extension auf
+  dem ganzen Pfad: `kit.screen` ruft `render`/`click` der App aus `ui_kit`-Code auf; die App muss darin ihren eigenen
+  Kanal benutzen dürfen, obwohl `ui_kit` kein `channels` hat (Rechte kann ein Zwischenglied so nicht gewinnen: es
+  ruft nur Code, den der Besitzer geschrieben hat, mit dessen Rechten ∩ Principal). Host-Code liest Tabellen eines
+  Importeurs, die Proxies sind (z. B. eine importierte Tabelle als Widget-Definition), außerhalb eines Aufrufs ohne
+  Metamethoden (kein Lua ohne Budget und Principal). Tests: `LuaPermissionBorrowingTest`. Empfehlung: API-Extensions wie `ui_kit` brauchen **keine** Rechte; alles für
   UI kommt über die Fähigkeits-Objekte `g`, `s`, `field` (wer sie hat, darf sie benutzen – die Runtime übergibt sie nur
   dem Besitzer des Screens bzw. Widgets, und `g`/`s:textInput`/`s:cursor` wirken nur während dessen Render-Aufruf).
 - **Budget:** Alles, was in einem Aufruf läuft – auch Code importierter Extensions – zählt auf das

@@ -76,10 +76,12 @@ interface ExtensionHost {
  * `ui.lerpColor`, `ui.viewport`, `items`, `time`, `clock`, `player`, `require`, `export`, `import`, `readonly` are
  * always there.
  *
- * **No borrowing of permissions through imports:** every permission-gated function additionally requires the
- * permission from the *principal* of the running call ([LuaExecution.principal], the extension the host called):
- * an extension without `channels` that calls an imported function which sends on the API extension's channel gets
- * a Lua error. The principal also pays the instruction budget of everything that runs in its call.
+ * **No borrowing of permissions:** every permission-gated function requires the permission from this extension, from
+ * the *principal* of the running call ([LuaExecution.principal], the extension the host called) and from the
+ * extension whose code called it ([LuaExecution.caller]), see [checkCaller]: an extension without `channels` that
+ * calls an imported function which sends on the API extension's channel gets a Lua error, and so does one that got
+ * hold of another extension's raw `ch.send`. The principal also pays the instruction budget of everything that runs
+ * in its call.
  *
  * After a runtime error the extension is dead ([alive] = false): nothing of it runs again, the host is notified once.
  */
@@ -167,13 +169,33 @@ class LuaExtension(
     private fun has(permission: String) = permission in pkg.permissions
 
     /**
-     * Permission check against the principal of the running call: an extension calling into this one (through an
-     * import) must hold [permission] itself. Throws a Lua error otherwise.
+     * Permission check of every gated API function of this extension; a Lua error unless **all** of these hold
+     * [permission] (effective rights = intersection, a function never runs with more rights than its owner):
+     * - this extension, the owner of the API function (always true for functions that exist, checked anyway);
+     * - the principal of the running call ([LuaExecution.principal], the extension the host called); there must be
+     *   one: outside a runtime call no gated function runs;
+     * - the extension whose Lua code called the function directly ([LuaExecution.caller]): a raw API function handed
+     *   to (or stolen by) another extension cannot be used by that extension's code, also not inside a call of this
+     *   extension (e.g. a callback of the other extension that this one runs).
      */
     internal fun checkCaller(permission: String) {
-        val principal = LuaExecution.principal?.owner as? LuaExtension ?: return
-        if (principal === this || permission in principal.pkg.permissions) return
-        throw LuaError("permission '$permission' missing: extension '${principal.id}' cannot use it through '$id'")
+        if (!has(permission)) throw LuaError("permission '$permission' missing: extension '$id' does not have it")
+        val principal = LuaExecution.principal?.owner as? LuaExtension
+            ?: throw LuaError("permission '$permission': API of '$id' used outside a call of the runtime")
+        if (principal !== this && permission !in principal.pkg.permissions) {
+            throw LuaError("permission '$permission' missing: extension '${principal.id}' cannot use it through '$id'")
+        }
+        when (val caller = LuaExecution.caller()) {
+            LuaExecution.Caller.Host -> {}
+            LuaExecution.Caller.Unknown -> throw LuaError("permission '$permission': caller of '$id' API is unknown")
+            is LuaExecution.Caller.Script -> {
+                val owner = caller.runtime.owner as? LuaExtension
+                    ?: throw LuaError("permission '$permission': caller of '$id' API is unknown")
+                if (owner !== this && permission !in owner.pkg.permissions) {
+                    throw LuaError("permission '$permission' missing: code of extension '${owner.id}' cannot use it through '$id'")
+                }
+            }
+        }
     }
 
     // ---- loading ------------------------------------------------------------------------------------------

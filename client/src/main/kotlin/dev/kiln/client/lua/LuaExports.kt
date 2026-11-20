@@ -55,8 +55,10 @@ class ReadOnlyProxy internal constructor(internal val target: LuaTable, internal
 
     private fun denied(): Nothing = throw LuaError("attempt to modify a read-only table (exported by '${exports.owner.id}')")
 
-    override fun rawget(key: Int): LuaValue = exports.wrap(target.get(key))
-    override fun rawget(key: LuaValue): LuaValue = exports.wrap(target.get(exports.unwrap(key)))
+    // outside a runtime call (host code reading a definition table that is a proxy) no metamethod may run: it would
+    // run Lua without budget and without principal
+    override fun rawget(key: Int): LuaValue = exports.wrap(if (LuaExecution.active) target.get(key) else target.rawget(key))
+    override fun rawget(key: LuaValue): LuaValue = exports.unwrap(key).let { k -> exports.wrap(if (LuaExecution.active) target.get(k) else target.rawget(k)) }
     override fun get(key: Int): LuaValue = rawget(key)
     override fun get(key: LuaValue): LuaValue = rawget(key)
 

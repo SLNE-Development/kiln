@@ -100,6 +100,7 @@ object LuaSandbox {
     fun compile(globals: Globals, source: ByteArray, chunkName: String): LuaValue {
         if (source.isNotEmpty() && source[0] == BYTECODE_SIGNATURE) throw LuaError("$chunkName: precompiled chunks are not allowed")
         val prototype = globals.compilePrototype(ByteArrayInputStream(source), "=$chunkName")
+        LuaExecution.registerChunk(prototype, globals)
         return globals.loader.load(prototype, chunkName, globals)
     }
 

@@ -1,9 +1,14 @@
 package dev.kiln.client.lua
 
 import org.luaj.vm2.Globals
+import org.luaj.vm2.Lua
 import org.luaj.vm2.LuaError
 import org.luaj.vm2.LuaValue
+import org.luaj.vm2.Prototype
 import org.luaj.vm2.Varargs
+import java.lang.ref.WeakReference
+import java.util.Collections
+import java.util.WeakHashMap
 
 /** A script failed or exceeded a limit; the extension must be unloaded. [message] is safe to show to the player. */
 class LuaScriptException(message: String, cause: Throwable? = null) : Exception(message, cause)
@@ -35,6 +40,58 @@ object LuaExecution {
         principal = null
         activeHook = null
     }
+
+    /** Owner (environment) of every compiled function prototype; closures can only come from these (no `load`). */
+    private val owners: MutableMap<Prototype, WeakReference<Globals>> = Collections.synchronizedMap(WeakHashMap())
+
+    /**
+     * Records [globals] as owner of [prototype] and all functions nested in it, and turns tail calls into plain
+     * calls: LuaJ runs a tail call *after* the calling function's frame is gone, so the callee would appear to be
+     * called by the caller's caller (see [caller]). `return f(x)` compiles to `TAILCALL A B 0; RETURN A 0`, and
+     * `CALL A B 0` (all results to the stack top) followed by that `RETURN` returns exactly the same values. The only
+     * difference: tail calls now count towards [LuaLimits.maxCallDepth].
+     */
+    internal fun registerChunk(prototype: Prototype, globals: Globals) {
+        val pending = ArrayDeque<Prototype>()
+        pending += prototype
+        while (pending.isNotEmpty()) {
+            val p = pending.removeLast()
+            owners[p] = WeakReference(globals)
+            val code = p.code
+            for (i in code.indices) {
+                val instruction = code[i]
+                if (Lua.GET_OPCODE(instruction) == Lua.OP_TAILCALL && Lua.GETARG_C(instruction) == 0) {
+                    code[i] = (instruction and Lua.MASK_NOT_OP) or (Lua.OP_CALL shl Lua.POS_OP)
+                }
+            }
+            p.p?.let { pending.addAll(it) }
+        }
+    }
+
+    /** Who called the host function that is running now. */
+    sealed interface Caller {
+        /** No Lua function on the stack: the host called the function directly (e.g. as a callback). */
+        data object Host : Caller
+
+        /** The innermost Lua function on the stack belongs to [runtime]. */
+        data class Script(val runtime: LuaRuntime) : Caller
+
+        /** A Lua function whose owner is unknown (must not happen; treated as "deny"). */
+        data object Unknown : Caller
+    }
+
+    /**
+     * The direct Lua caller of the running host function: the owner of the innermost Lua frame of the current call
+     * (pcall frames skipped). Frames are tracked by the principal's hook ([SandboxHook]), which every extension's
+     * hook forwards to, so this works across extensions.
+     */
+    fun caller(): Caller {
+        val hook = activeHook ?: return Caller.Host
+        val closure = hook.innermostClosure() ?: return Caller.Host
+        val globals = owners[closure.p]?.get() ?: return Caller.Unknown
+        val runtime = (globals.debuglib as? SandboxHook)?.runtime ?: return Caller.Unknown
+        return Caller.Script(runtime)
+    }
 }
 
 /**
@@ -56,6 +113,10 @@ class LuaRuntime(
 ) {
     private val hook = SandboxHook(limits)
     val globals: Globals = LuaSandbox.createGlobals(hook, limits, print)
+
+    init {
+        hook.runtime = this
+    }
 
     /** The object (extension) this runtime belongs to; read through [LuaExecution.principal]. */
     var owner: Any? = null
