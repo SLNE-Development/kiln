@@ -3,7 +3,7 @@ import sys
 from fontTools.ttLib import TTFont
 from fontTools.pens.svgPathPen import SVGPathPen
 
-FONT = sys.argv[2] if len(sys.argv) > 2 else r"C:WindowsFontsMontserrat-Medium.ttf"
+FONT = sys.argv[2] if len(sys.argv) > 2 else "C:/Windows/Fonts/Montserrat-Medium.ttf"
 OUT = sys.argv[1] if len(sys.argv) > 1 else "docs/assets"
 
 font = TTFont(FONT)
